@@ -393,13 +393,12 @@ input[type="checkbox"]{flex:0 0 auto; margin:0; accent-color:var(--green)}
     </div>
     <p class="group-foot">긴 바늘이 가리키는 분을 시계 바깥에 파란 숫자로 보여 줘요.</p>
 
-    <div id="soundGroup">
-      <p class="group-head">소리</p>
-      <div class="group">
-        <label class="row"><span>맞히면 시간 읽어 주기</span><input type="checkbox" switch id="optSpeak"></label>
-      </div>
-      <p class="group-foot">한국어 음성이 기기에 있어야 소리가 나요.</p>
+    <p class="group-head">소리</p>
+    <div class="group">
+      <label class="row"><span>바늘 돌릴 때 똑딱 소리</span><input type="checkbox" switch id="optTick"></label>
+      <label class="row" id="speakRow"><span>맞히면 시간 읽어 주기</span><input type="checkbox" switch id="optSpeak"></label>
     </div>
+    <p class="group-foot">무음 모드에서는 똑딱 소리가 나지 않아요. 읽어 주기는 기기에 한국어 음성이 있어야 해요.</p>
 
     <p class="group-head">기록</p>
     <div class="group">
@@ -450,10 +449,11 @@ input[type="checkbox"]{flex:0 0 auto; margin:0; accent-color:var(--green)}
     stars: (typeof saved.stars === 'number' && saved.stars >= 0) ? saved.stars : 0,
     streak:0,
     showMin: saved.showMin !== false,
-    autoSpeak: saved.autoSpeak === true
+    autoSpeak: saved.autoSpeak === true,
+    tick: saved.tick !== false
   };
   function save(){
-    try { localStorage.setItem(KEY, JSON.stringify({level:S.level, stars:S.stars, showMin:S.showMin, autoSpeak:S.autoSpeak})); } catch(e){}
+    try { localStorage.setItem(KEY, JSON.stringify({level:S.level, stars:S.stars, showMin:S.showMin, autoSpeak:S.autoSpeak, tick:S.tick})); } catch(e){}
   }
 
   /* ---------- words ---------- */
@@ -492,10 +492,11 @@ input[type="checkbox"]{flex:0 0 auto; margin:0; accent-color:var(--green)}
   }
   function shuffle(a){ for (var i = a.length - 1; i > 0; i--){ var j = Math.floor(Math.random()*(i+1)); var t = a[i]; a[i] = a[j]; a[j] = t; } return a; }
 
-  /* ---------- haptics (iOS 18+ Safari switch trick; silently does nothing elsewhere) ---------- */
-  var lastHaptic = 0;
+  /* ---------- haptics ----------
+     iOS has no vibration API for web pages. Clicking a hidden <input switch> gives a haptic tap,
+     but since iOS 18.x only while a real tap is being handled (not during a drag).
+     So: haptics on taps and when the finger lifts off a hand; a soft tick sound while dragging. */
   function haptic(){
-    var now = Date.now(); if (now - lastHaptic < 35) return; lastHaptic = now;
     try {
       var l = document.createElement('label'); l.setAttribute('aria-hidden','true'); l.style.display = 'none';
       var i = document.createElement('input'); i.type = 'checkbox'; i.setAttribute('switch','');
@@ -517,6 +518,31 @@ input[type="checkbox"]{flex:0 0 auto; margin:0; accent-color:var(--green)}
       var u = new SpeechSynthesisUtterance(text); u.lang = 'ko-KR'; u.rate = 0.85;
       if (koVoice) u.voice = koVoice;
       speechSynthesis.speak(u);
+    } catch(e){}
+  }
+
+  /* ---------- tick sound (Web Audio; unlocked by the first tap) ---------- */
+  var actx = null, lastTick = 0;
+  function audioUnlock(){
+    try {
+      if (!actx){ var AC = window.AudioContext || window.webkitAudioContext; if (!AC) return; actx = new AC(); }
+      if (actx.state === 'suspended') actx.resume();
+    } catch(e){}
+  }
+  document.addEventListener('touchend', audioUnlock, {capture:true, passive:true});
+  document.addEventListener('click', audioUnlock, true);
+  function tickSound(strong){
+    if (!S.tick || !actx || actx.state !== 'running') return;
+    var now = Date.now(); if (now - lastTick < 28) return; lastTick = now;
+    try {
+      var t = actx.currentTime, o = actx.createOscillator(), g = actx.createGain();
+      o.type = 'triangle';
+      o.frequency.setValueAtTime(strong ? 1400 : 2100, t);
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(strong ? 0.32 : 0.16, t + 0.002);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.04);
+      o.connect(g); g.connect(actx.destination);
+      o.start(t); o.stop(t + 0.05);
     } catch(e){}
   }
 
@@ -601,13 +627,17 @@ input[type="checkbox"]{flex:0 0 auto; margin:0; accent-color:var(--green)}
     if (!drag || e.pointerId !== drag.id) return;
     move(angOf(pt(e)));
   });
+  var releasedAt = 0;
   function endDrag(e){
     if (!drag || e.pointerId !== drag.id) return;
     svg.classList.remove('grab-hour','grab-minute');
     drag = null; raw = T;
+    if (e.type === 'pointerup'){ releasedAt = Date.now(); haptic(); }
   }
   svg.addEventListener('pointerup', endDrag);
   svg.addEventListener('pointercancel', endDrag);
+  // On iPhone the lift-off haptic is allowed during touchend
+  svg.addEventListener('touchend', function(){ if (Date.now() - releasedAt < 400){ releasedAt = 0; haptic(); } }, {passive:true});
   function move(a){
     var d;
     if (drag.hand === 'minute'){ d = a/6 - mod(raw,60); if (d > 30) d -= 60; if (d < -30) d += 60; }
@@ -615,9 +645,9 @@ input[type="checkbox"]{flex:0 0 auto; margin:0; accent-color:var(--green)}
     raw = mod(raw + d, 720);
     var s = snaps()[drag.hand], nt = mod(Math.round(raw/s)*s, 720);
     if (nt !== T){
-      var tick = s >= 5 || Math.floor(nt/5) !== Math.floor(T/5);
+      var cross = s >= 5 || Math.floor(nt/5) !== Math.floor(T/5);
       T = nt; render();
-      if (tick) haptic();
+      if (cross) tickSound(nt % 60 === 0);
     }
   }
   svg.addEventListener('keydown', function(e){
@@ -887,7 +917,10 @@ input[type="checkbox"]{flex:0 0 auto; margin:0; accent-color:var(--green)}
   optMin.addEventListener('change', function(){ S.showMin = optMin.checked; save(); applyShowMin(); });
   optSpeak.checked = S.autoSpeak;
   optSpeak.addEventListener('change', function(){ S.autoSpeak = optSpeak.checked; save(); });
-  if (!canSpeak) $('#soundGroup').hidden = true;
+  if (!canSpeak) $('#speakRow').hidden = true;
+  var optTick = $('#optTick');
+  optTick.checked = S.tick;
+  optTick.addEventListener('change', function(){ S.tick = optTick.checked; save(); if (S.tick) tickSound(true); });
   function openSettings(){ paintStars(false); showSheet(settingsSheet, hideSheet); }
   $('#moreBtn').addEventListener('click', openSettings);
   $('#starsBtn').addEventListener('click', openSettings);
