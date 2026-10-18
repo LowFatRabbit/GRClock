@@ -1,7 +1,7 @@
-// 시계 놀이 오프라인용 서비스 워커 v4
+// 시계 놀이 오프라인용 서비스 워커 v5
 // - 화면(index.html): 인터넷이 되면 새 버전을 받고, 안 되면 저장된 버전으로 실행
 // - 아이콘 등 나머지 파일: 저장된 것을 바로 사용
-const CACHE = 'clock-play-v4';
+const CACHE = 'clock-play-v5';
 const ASSETS = ['./', './index.html', './manifest.webmanifest', './icon-180.png', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', (e) => {

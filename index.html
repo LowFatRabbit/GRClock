@@ -147,6 +147,17 @@ button:focus-visible{outline:3px solid var(--blue); outline-offset:2px}
 #clock.grab-hour .hour line{stroke-width:14}
 #clock.grab-minute .minute line{stroke-width:9.5}
 .cap{fill:var(--label)} .capdot{fill:var(--face)}
+#clock.drawing{cursor:crosshair}
+#clock.no-hands .hand{display:none}
+#clock.ghost .hand{opacity:.42}
+.ink-raw{fill:none; stroke:var(--label); stroke-width:6; stroke-linecap:round; stroke-linejoin:round; opacity:.5; transition:opacity .25s}
+.ink line{stroke-linecap:round; transition:stroke-dashoffset .28s ease-out, stroke .2s, stroke-width .2s}
+.ink .neutral{stroke:var(--label2); stroke-width:9}
+.ink .h{stroke:var(--red); stroke-width:11}
+.ink .m{stroke:var(--blue); stroke-width:6.5}
+.ink .bad{stroke:var(--orange)}
+.start-dot{fill:var(--blue); animation:breathe 1.6s ease-in-out infinite}
+@keyframes breathe{0%,100%{opacity:.12}50%{opacity:.35}}
 
 .legend{flex:0 0 auto; display:flex; justify-content:center; gap:18px; font-size:13px; color:var(--label2); margin:0 0 22px}
 .legend span{display:inline-flex; align-items:center; gap:6px}
@@ -188,10 +199,10 @@ button:focus-visible{outline:3px solid var(--blue); outline-offset:2px}
 .tabbar{
   position:fixed; left:0; right:0; margin:0 auto; bottom:var(--tab-b); z-index:20;
   width:min(calc(100% - 40px), 420px); height:var(--tab-h); border-radius:999px;
-  display:grid; grid-template-columns:repeat(3,1fr); padding:4px;
+  display:grid; grid-template-columns:repeat(4,1fr); padding:4px;
 }
 .tab-lens{
-  position:absolute; top:4px; bottom:4px; left:4px; width:calc((100% - 8px)/3);
+  position:absolute; top:4px; bottom:4px; left:4px; width:calc((100% - 8px)/4);
   border-radius:999px; background:var(--lens);
   transform:translateX(calc(var(--i,0) * 100%));
   transition:transform .45s cubic-bezier(.32,.72,0,1);
@@ -338,6 +349,13 @@ input[type="checkbox"]{flex:0 0 auto; margin:0; accent-color:var(--green)}
       </div>
     </section>
 
+    <section class="panel" id="drawPanel" hidden>
+      <div class="actions-row">
+        <button class="btn gray" id="clearBtn">지우기</button>
+        <button class="btn filled" id="drawCheckBtn">다 그렸어</button>
+      </div>
+    </section>
+
     <section class="panel" id="freePanel" hidden>
       <div class="readout">
         <div class="time" id="freeTime"></div>
@@ -356,6 +374,10 @@ input[type="checkbox"]{flex:0 0 auto; margin:0; accent-color:var(--green)}
     <button class="tab" role="tab" data-mode="set" aria-selected="false">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.35-5.66" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/><path d="M20.2 3.6v3.9h-3.9" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/><path d="M12 12l3.2-3.2" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/><circle cx="12" cy="12" r="1.7" fill="currentColor"/></svg>
       <span>시계 맞추기</span>
+    </button>
+    <button class="tab" role="tab" data-mode="draw" aria-selected="false">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.2 19.8l1.1-4.4L15.7 5a2 2 0 0 1 2.8 0l.5.5a2 2 0 0 1 0 2.8L8.6 18.7z" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"/><path d="M13.9 6.9l3.2 3.2" fill="none" stroke="currentColor" stroke-width="1.9"/></svg>
+      <span>그려 맞추기</span>
     </button>
     <button class="tab" role="tab" data-mode="free" aria-selected="false">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M10.5 3.5c.55 3.7 2 5.15 5.7 5.7-3.7.55-5.15 2-5.7 5.7-.55-3.7-2-5.15-5.7-5.7 3.7-.55 5.15-2 5.7-5.7z"/><path fill="currentColor" d="M17.6 13.2c.3 2 1.1 2.8 3.1 3.1-2 .3-2.8 1.1-3.1 3.1-.3-2-1.1-2.8-3.1-3.1 2-.3 2.8-1.1 3.1-3.1z"/><circle cx="5.6" cy="17.6" r="1.3" fill="currentColor"/></svg>
@@ -567,6 +589,8 @@ input[type="checkbox"]{flex:0 0 auto; margin:0; accent-color:var(--green)}
   for (var k2 = 0; k2 < 12; k2++){
     var q2 = P(130, k2*30); var t2 = mk('text',{x:q2[0],y:q2[1],dy:'.35em','class':'minlab'}, minLabels); t2.textContent = k2*5;
   }
+  var startDot = mk('circle',{cx:0,cy:0,r:16,'class':'start-dot'});
+  var inkG = mk('g',{'class':'ink'});
   var hourHand = mk('g',{'class':'hand hour'});
   mk('line',{x1:0,y1:12,x2:0,y2:-54}, hourHand);
   var minHand = mk('g',{'class':'hand minute'});
@@ -856,6 +880,144 @@ input[type="checkbox"]{flex:0 0 auto; margin:0; accent-color:var(--green)}
   });
   $('#showBtn').addEventListener('click', reveal);
 
+  /* ---------- draw mode ---------- */
+  // tolerance in degrees for each level: [hour hand, minute hand]
+  var TOL = {60:[14,15], 30:[12,15], 15:[10,12], 5:[10,9], 1:[10,4]};
+  var drawQ = {done:true}, strokes = [], cur = null, subTimer = null;
+  function clearInk(){ inkG.innerHTML = ''; strokes = []; cur = null; }
+  function drawRand(step, prev){
+    var q, g = 0;
+    do { q = freshRand(step, prev, true); g++; }
+    while (g < 40 && angDiff(mod(toT(q.h,q.m)*0.5,360), q.m*6) < 24);
+    return q;
+  }
+  function drawGuide(){
+    if (S.mode !== 'draw' || drawQ.done) return;
+    var n = strokes.length;
+    $('#sub').textContent = n === 0 ? '가운데 점에서 짧은 바늘과 긴 바늘을 그려 봐'
+                         : n === 1 ? '좋아! 이제 바늘 하나 더'
+                         : '다 그렸으면 ‘다 그렸어’를 눌러';
+    startDot.style.display = n === 0 ? '' : 'none';
+    $('#drawCheckBtn').disabled = n < 2;
+  }
+  function flashSub(text){
+    $('#sub').textContent = text;
+    clearTimeout(subTimer); subTimer = setTimeout(drawGuide, 1800);
+  }
+  function newDraw(){
+    var q = drawRand(S.level, drawQ.h ? drawQ : null);
+    drawQ = {h:q.h, m:q.m, tries:0, done:false};
+    clearInk();
+    T = toT(q.h,q.m); render();
+    svg.classList.add('no-hands','drawing'); svg.classList.remove('ghost');
+    setPrompt(label(q.h,q.m) + (q.m === 0 ? '를' : '을') + ' 그려 봐', '');
+    $('#clearBtn').disabled = false;
+    drawGuide(); syncLive();
+  }
+  function paintInk(){
+    strokes.forEach(function(st){ st.el.classList.remove('neutral','h','m','bad'); });
+    if (strokes.length === 1) strokes[0].el.classList.add('neutral');
+    if (strokes.length === 2){
+      var a = strokes[0], b = strokes[1], shortS = a.len <= b.len ? a : b, longS = shortS === a ? b : a;
+      shortS.el.classList.add('h'); longS.el.classList.add('m');
+    }
+    drawGuide();
+  }
+  svg.addEventListener('pointerdown', function(e){
+    if (S.mode !== 'draw' || drawQ.done || tweening || cur) return;
+    var p = pt(e);
+    cur = {id:e.pointerId, pts:[p], path:mk('path',{'class':'ink-raw', d:'M' + p.x.toFixed(1) + ' ' + p.y.toFixed(1)}, inkG)};
+    try { svg.setPointerCapture(e.pointerId); } catch(err){}
+    e.preventDefault();
+  });
+  svg.addEventListener('pointermove', function(e){
+    if (!cur || e.pointerId !== cur.id) return;
+    var p = pt(e), last = cur.pts[cur.pts.length - 1];
+    if (Math.hypot(p.x - last.x, p.y - last.y) < 1.5) return;
+    cur.pts.push(p);
+    cur.path.setAttribute('d', cur.path.getAttribute('d') + ' L' + p.x.toFixed(1) + ' ' + p.y.toFixed(1));
+  });
+  function finishStroke(e){
+    if (!cur || e.pointerId !== cur.id) return;
+    var c = cur; cur = null;
+    c.path.style.opacity = '0';
+    setTimeout(function(){ c.path.remove(); }, reduce ? 0 : 260);
+    if (e.type !== 'pointerup') return;
+    releasedAt = Date.now(); haptic();
+    var far = c.pts[0], fd = 0, nd = Infinity;
+    c.pts.forEach(function(p){ var d = Math.hypot(p.x, p.y); if (d > fd){ fd = d; far = p; } if (d < nd) nd = d; });
+    if (fd < 30){ flashSub('조금 더 길게 쭉 그어 봐'); return; }
+    if (nd > 46){ flashSub('가운데 점에서부터 그어 봐'); return; }
+    var ang = angOf(far), len = Math.min(fd, 104);
+    if (strokes.length >= 2){
+      var idx = Math.abs(strokes[0].len - len) <= Math.abs(strokes[1].len - len) ? 0 : 1;
+      strokes[idx].el.remove(); strokes.splice(idx, 1);
+    }
+    var tip = P(len, ang);
+    var line = mk('line',{x1:0, y1:0, x2:tip[0].toFixed(1), y2:tip[1].toFixed(1)}, inkG);
+    if (!reduce){
+      line.style.strokeDasharray = len; line.style.strokeDashoffset = len;
+      void line.getBoundingClientRect();
+      line.style.strokeDashoffset = '0';
+      setTimeout(function(){ line.style.strokeDasharray = ''; line.style.strokeDashoffset = ''; }, 320);
+    }
+    strokes.push({ang:ang, len:len, el:line});
+    paintInk();
+  }
+  svg.addEventListener('pointerup', finishStroke);
+  svg.addEventListener('pointercancel', finishStroke);
+
+  function revealDraw(){
+    if (drawQ.done || tweening) return;
+    S.streak = 0; drawQ.done = true; clearTimeout(subTimer);
+    $('#drawCheckBtn').disabled = true; $('#clearBtn').disabled = true;
+    svg.classList.remove('no-hands','drawing'); svg.classList.add('ghost');
+    T = 0; render();
+    tweenTo(toT(drawQ.h,drawQ.m), function(){
+      showResult('info', '이렇게 그리면 돼', minHow(drawQ.m) + ', ' + hourHow(drawQ.h,drawQ.m) + ' 있지?<br>' + readingSentence(drawQ.h,drawQ.m),
+        [speakAction(drawQ.h,drawQ.m), nextAction()], newDraw);
+    });
+  }
+  $('#clearBtn').addEventListener('click', function(){ if (drawQ.done) return; clearInk(); paintInk(); });
+  $('#drawCheckBtn').addEventListener('click', function(){
+    if (drawQ.done || strokes.length < 2) return;
+    var h = drawQ.h, m = drawQ.m, tol = TOL[S.level];
+    var a = strokes[0], b = strokes[1], shortS = a.len <= b.len ? a : b, longS = shortS === a ? b : a;
+    var tH = mod(toT(h,m)*0.5, 360), tM = m*6;
+    var retry = {label:'다시 그려 볼게', cls:'filled', fn:hideSheet};
+    var show = {label:'정답 보기', cls:'gray', fn:function(){ hideSheet(); setTimeout(revealDraw, reduce ? 0 : 250); }};
+    if (longS.len - shortS.len < longS.len * 0.15){
+      haptic();
+      showResult('try', '두 바늘 길이가 비슷해', '<span class="h">짧은 바늘</span>은 짧게, <span class="m">긴 바늘</span>은 길게 그려 봐.', [retry], null);
+      return;
+    }
+    var okH = angDiff(shortS.ang, tH) <= tol[0], okM = angDiff(longS.ang, tM) <= tol[1];
+    if (okH && okM){
+      drawQ.done = true; clearTimeout(subTimer);
+      $('#drawCheckBtn').disabled = true; $('#clearBtn').disabled = true;
+      svg.classList.remove('no-hands','drawing'); svg.classList.add('ghost');
+      T = toT(h,m); render(); syncLive();
+      var first = drawQ.tries === 0; reward(first, h, m);
+      showResult('good', first ? cheer() : '잘 그렸어! 👍', readingSentence(h,m), [speakAction(h,m), nextAction()], newDraw);
+      return;
+    }
+    drawQ.tries++; S.streak = 0;
+    haptic(); setTimeout(haptic, 90);
+    var swapped = angDiff(longS.ang, tH) <= tol[0] && angDiff(shortS.ang, tM) <= tol[1];
+    if (swapped){
+      shortS.el.classList.add('bad'); longS.el.classList.add('bad');
+      showResult('try', '바늘 길이가 바뀌었어', '시를 가리키는 바늘은 <span class="h">짧은 바늘</span>, 분을 가리키는 바늘은 <span class="m">긴 바늘</span>이야. 길이를 바꿔서 그려 봐.', [show, retry], null);
+      return;
+    }
+    if (!okH) shortS.el.classList.add('bad');
+    if (!okM) longS.el.classList.add('bad');
+    var title = !okH && !okM ? '두 바늘을 다시 볼까?' : !okM ? '긴 바늘이 조금 달라' : '짧은 바늘이 조금 달라';
+    var tips = [];
+    if (!okM) tips.push(minHow(m) + ' 그려야 해.');
+    if (!okH) tips.push(hourHow(h,m) + ' 그려야 해.');
+    showResult('try', title, tips.join('<br>') + '<br>주황색 바늘을 다시 그어 봐.', [show, retry], null);
+  });
+
   /* ---------- free mode ---------- */
   function updateFree(){
     var c = hm(T);
@@ -880,7 +1042,7 @@ input[type="checkbox"]{flex:0 0 auto; margin:0; accent-color:var(--green)}
     b.addEventListener('click', function(){
       if (S.level === L[0]) return;
       S.level = L[0]; save(); paintSeg(); haptic();
-      if (S.mode === 'read') newRead(); else if (S.mode === 'set') newSet();
+      if (S.mode === 'read') newRead(); else if (S.mode === 'set') newSet(); else if (S.mode === 'draw') newDraw();
     });
     seg.appendChild(b);
   });
@@ -892,7 +1054,7 @@ input[type="checkbox"]{flex:0 0 auto; margin:0; accent-color:var(--green)}
   }
 
   /* ---------- tabs ---------- */
-  var MODES = ['read','set','free'];
+  var MODES = ['read','set','draw','free'];
   var tabbar = $('.tabbar');
   function setMode(m){
     S.mode = m;
@@ -901,8 +1063,10 @@ input[type="checkbox"]{flex:0 0 auto; margin:0; accent-color:var(--green)}
     seg.hidden = m === 'free';
     $('#readPanel').hidden = m !== 'read';
     $('#setPanel').hidden = m !== 'set';
+    $('#drawPanel').hidden = m !== 'draw';
     $('#freePanel').hidden = m !== 'free';
-    if (m === 'read') newRead(); else if (m === 'set') newSet(); else enterFree();
+    clearTimeout(subTimer); clearInk(); svg.classList.remove('no-hands','ghost','drawing'); startDot.style.display = 'none';
+    if (m === 'read') newRead(); else if (m === 'set') newSet(); else if (m === 'draw') newDraw(); else enterFree();
   }
   $$('.tab').forEach(function(b){
     b.addEventListener('click', function(){
